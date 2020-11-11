@@ -20,5 +20,10 @@ thiserror = "1.0"
 reqwest = { version = "0.10", features = [ "default-tls" ] }
 tokio = { version = "0.2", features = [ "full" ] }
 
-[features]
-default = [ "reqwest", "surf" ]
+[[example]]
+name = "stream"
+required-features = [ "reqwest" ]
+
+[[example]]
+name = "vod"
+required-features = [ "reqwest" ]
