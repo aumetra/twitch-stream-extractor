@@ -1,6 +1,6 @@
 # Twitch stream extractor
 
-Extract URLs for live streams or VODs from Twitch
+Extract URLs for live streams or VoDs from Twitch
 
 ## Examples
 

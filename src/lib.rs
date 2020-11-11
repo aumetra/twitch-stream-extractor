@@ -1,8 +1,19 @@
+#![warn(clippy::all, clippy::pedantic)]
+#![allow(
+    clippy::doc_markdown,
+    clippy::must_use_candidate,
+    clippy::pub_enum_variant_names
+)]
+
+//!
+//! Extract URLs of live streams or VoD M3U8 playlists from Twitch
+//!
+
 use {
     async_trait::async_trait,
     hls_m3u8::{Error as HlsM3u8Error, MasterPlaylist},
     serde::{de::DeserializeOwned, Deserialize},
-    std::{boxed::Box, convert::TryFrom, error::Error as StdError, io},
+    std::{boxed::Box, convert::TryFrom, error::Error as StdError},
     thiserror::Error as DeriveError,
 };
 
@@ -11,11 +22,17 @@ const CLIENT_ID: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
 const API_BASE: &str = "https://api.twitch.tv/api";
 const PLAYLIST_DOMAIN: &str = "https://usher.ttvnw.net";
 
+pub type GeneralError = Box<dyn StdError + Sync + Send + 'static>;
+
+/// Trait to define own clients
 #[async_trait]
 pub trait AsyncClient {
+    /// The error returned by the functions
     type Error: Into<Error>;
 
+    /// Execute a GET request
     async fn get(&self, url: &str) -> Result<String, Self::Error>;
+    /// Execute a GET request and decode the answer as JSON
     async fn get_json<T: DeserializeOwned>(&self, url: &str) -> Result<T, Self::Error>;
 }
 
@@ -47,6 +64,7 @@ impl AsyncClient for surf::Client {
     }
 }
 
+/// Combined error type
 #[derive(Debug, DeriveError)]
 pub enum Error {
     #[error("hls_m3u8 error occurred")]
@@ -61,13 +79,7 @@ pub enum Error {
     Surf(String),
 
     #[error("An error occurred")]
-    Error(#[from] Box<dyn StdError + Sync + Send + 'static>),
-
-    #[error("An error occurred")]
-    IoError(#[from] io::Error),
-
-    #[error("An error occurred")]
-    NotThreadsafeError(#[from] Box<dyn StdError + 'static>),
+    Error(#[from] GeneralError),
 }
 
 #[cfg(feature = "surf")]
@@ -77,19 +89,39 @@ impl From<surf::Error> for Error {
     }
 }
 
+/// The URL extractor
 pub struct Extractor<T: AsyncClient> {
     client: T,
 }
 
 impl<T: AsyncClient> Extractor<T> {
+    /// Construct a new extractor using the given client
     pub fn custom(client: T) -> Self {
         Self { client }
     }
 
+    /// Extract the playlist for a live stream
+    ///
+    /// # Errors
+    ///
+    /// This can either fail because:
+    /// * the access token response is malformed
+    /// * internet connectivity issues
+    /// * Twitch server issues
+    /// * Twitch changed the APIs
     pub async fn stream(&self, channel_name: &'_ str) -> Result<MasterPlaylist<'static>, Error> {
         fetch_playlist(&self.client, channel_name, RequestType::Stream).await
     }
 
+    /// Extract the playlist for a VoD
+    ///
+    /// # Errors
+    ///
+    /// This can either fail because:
+    /// * the access token response is malformed
+    /// * internet connectivity issues
+    /// * Twitch server issues
+    /// * Twitch changed the APIs
     pub async fn vod(&self, vod_id: &'_ str) -> Result<MasterPlaylist<'static>, Error> {
         fetch_playlist(&self.client, vod_id, RequestType::Vod).await
     }
@@ -97,6 +129,7 @@ impl<T: AsyncClient> Extractor<T> {
 
 #[cfg(feature = "reqwest")]
 impl Extractor<reqwest::Client> {
+    /// Create a new extractor using a standard reqwest client
     pub fn reqwest() -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -106,6 +139,7 @@ impl Extractor<reqwest::Client> {
 
 #[cfg(feature = "surf")]
 impl Extractor<surf::Client> {
+    /// Create a new extractor using a standard surf client
     pub fn surf() -> Self {
         Self {
             client: surf::client(),
@@ -136,7 +170,7 @@ impl RequestType {
         )
     }
 
-    fn playlist_url(&self, id: &str, access_token: AccessToken) -> String {
+    fn playlist_url(&self, id: &str, access_token: &AccessToken) -> String {
         let query = format!(
             "client_id={}&token={}&sig={}&allow_source&allow_audio_only",
             CLIENT_ID, access_token.token, access_token.signature
@@ -170,14 +204,14 @@ async fn fetch_playlist<T: AsyncClient>(
         .await
         .map_err(Into::into)?;
 
-    let playlist_url = request_type.playlist_url(id, access_token);
+    let playlist_url = request_type.playlist_url(id, &access_token);
     let playlist_data = client
         .get(playlist_url.as_str())
         .await
         .map_err(Into::into)?;
 
     MasterPlaylist::try_from(playlist_data.as_str())
-        .map(|playlist| playlist.into_owned())
+        .map(MasterPlaylist::into_owned)
         .map_err(Error::from)
 }
 
