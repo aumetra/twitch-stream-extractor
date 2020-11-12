@@ -60,7 +60,7 @@ impl AsyncClient for surf::Client {
     }
 
     async fn get_json<T: DeserializeOwned>(&self, url: &str) -> Result<T, Self::Error> {
-        self.get_json(url).await
+        self.get(url).recv_json::<T>().await
     }
 }
 
@@ -76,7 +76,7 @@ pub enum Error {
 
     #[cfg(feature = "surf")]
     #[error("surf error occurred")]
-    Surf(String),
+    Surf(surf::Error),
 
     #[error("An error occurred")]
     Error(#[from] GeneralError),
@@ -85,7 +85,7 @@ pub enum Error {
 #[cfg(feature = "surf")]
 impl From<surf::Error> for Error {
     fn from(err: surf::Error) -> Self {
-        Self::Surf(err.to_string())
+        Self::Surf(err)
     }
 }
 
