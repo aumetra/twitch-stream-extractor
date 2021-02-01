@@ -103,14 +103,7 @@ pub(crate) async fn get_access_token<T: AsyncClient>(
     let access_token_body = serde_json::to_string(&body)?;
 
     let gql_response = client
-        .post_json::<GqlResponse>(
-            GRAPHQL_API_URL,
-            &[
-                ("client-id", CLIENT_ID),
-                ("content-type", "application/json"),
-            ],
-            access_token_body,
-        )
+        .post_json::<GqlResponse>(GRAPHQL_API_URL, ("client-id", CLIENT_ID), access_token_body)
         .await
         .map_err(Into::into)?;
 

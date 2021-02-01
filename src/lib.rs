@@ -35,7 +35,7 @@ pub trait AsyncClient {
     async fn post_json<T: DeserializeOwned>(
         &self,
         url: &str,
-        header: &[(&str, &str)],
+        header: (&str, &str),
         body: String,
     ) -> Result<T, Self::Error>;
 }
@@ -52,16 +52,16 @@ impl AsyncClient for reqwest::Client {
     async fn post_json<T: DeserializeOwned>(
         &self,
         url: &str,
-        headers: &[(&str, &str)],
+        (header_name, header_value): (&str, &str),
         body: String,
     ) -> Result<T, Self::Error> {
-        let mut request_builder = self.post(url).body(body);
-
-        for (header_name, header_value) in headers {
-            request_builder = request_builder.header(*header_name, *header_value);
-        }
-
-        request_builder.send().await?.json::<T>().await
+        self.post(url)
+            .header(header_name, header_value)
+            .body(body)
+            .send()
+            .await?
+            .json::<T>()
+            .await
     }
 }
 
@@ -77,16 +77,14 @@ impl AsyncClient for surf::Client {
     async fn post_json<T: DeserializeOwned>(
         &self,
         url: &str,
-        headers: &[(&str, &str)],
+        (header_name, header_value): (&str, &str),
         body: String,
     ) -> Result<T, Self::Error> {
-        let mut request_builder = self.post(url).body(body);
-
-        for (header_name, header_value) in headers {
-            request_builder = request_builder.header(*header_name, *header_value);
-        }
-
-        request_builder.recv_json::<T>().await
+        self.post(url)
+            .header(header_name, header_value)
+            .body(body)
+            .recv_json::<T>()
+            .await
     }
 }
 
