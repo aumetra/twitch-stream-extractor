@@ -19,7 +19,6 @@ use {
 
 const CLIENT_ID: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
 
-const API_BASE: &str = "https://api.twitch.tv/api";
 const PLAYLIST_DOMAIN: &str = "https://usher.ttvnw.net";
 
 pub type GeneralError = Box<dyn StdError + Sync + Send + 'static>;
@@ -32,8 +31,13 @@ pub trait AsyncClient {
 
     /// Execute a GET request
     async fn get(&self, url: &str) -> Result<String, Self::Error>;
-    /// Execute a GET request and decode the answer as JSON
-    async fn get_json<T: DeserializeOwned>(&self, url: &str) -> Result<T, Self::Error>;
+    /// Execute a POST request and decode the answer as JSON
+    async fn post_json<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        header: &[(&str, &str)],
+        body: String,
+    ) -> Result<T, Self::Error>;
 }
 
 #[cfg(feature = "reqwest")]
@@ -45,8 +49,19 @@ impl AsyncClient for reqwest::Client {
         self.get(url).send().await?.text().await
     }
 
-    async fn get_json<T: DeserializeOwned>(&self, url: &str) -> Result<T, Self::Error> {
-        self.get(url).send().await?.json::<T>().await
+    async fn post_json<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: String,
+    ) -> Result<T, Self::Error> {
+        let mut request_builder = self.post(url).body(body);
+
+        for (header_name, header_value) in headers {
+            request_builder = request_builder.header(*header_name, *header_value);
+        }
+
+        request_builder.send().await?.json::<T>().await
     }
 }
 
@@ -59,8 +74,19 @@ impl AsyncClient for surf::Client {
         self.get(url).recv_string().await
     }
 
-    async fn get_json<T: DeserializeOwned>(&self, url: &str) -> Result<T, Self::Error> {
-        self.get(url).recv_json::<T>().await
+    async fn post_json<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: String,
+    ) -> Result<T, Self::Error> {
+        let mut request_builder = self.post(url).body(body);
+
+        for (header_name, header_value) in headers {
+            request_builder = request_builder.header(*header_name, *header_value);
+        }
+
+        request_builder.recv_json::<T>().await
     }
 }
 
@@ -74,12 +100,18 @@ pub enum Error {
     #[error("reqwest error occurred")]
     Reqwest(#[from] reqwest::Error),
 
+    #[error("serde-json error occurred")]
+    SerdeJson(#[from] serde_json::Error),
+
     #[cfg(feature = "surf")]
     #[error("surf error occurred")]
     Surf(surf::Error),
 
     #[error("An error occurred")]
     Error(#[from] GeneralError),
+
+    #[error("Missing access token")]
+    MissingAccessToken,
 }
 
 #[cfg(feature = "surf")]
@@ -147,33 +179,17 @@ impl Extractor<surf::Client> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
 enum RequestType {
     Stream,
     Vod,
 }
 
 impl RequestType {
-    fn as_str(&self) -> &'static str {
-        match self {
-            RequestType::Stream => "channels",
-            RequestType::Vod => "vods",
-        }
-    }
-
-    fn access_token_url(&self, id: &str) -> String {
-        format!(
-            "{}/{}/{}/access_token?client_id={}",
-            API_BASE,
-            self.as_str(),
-            id,
-            CLIENT_ID
-        )
-    }
-
-    fn playlist_url(&self, id: &str, access_token: &AccessToken) -> String {
+    fn playlist_url(self, id: &str, access_token: &AccessToken) -> String {
         let query = format!(
             "client_id={}&token={}&sig={}&allow_source&allow_audio_only",
-            CLIENT_ID, access_token.token, access_token.signature
+            CLIENT_ID, access_token.value, access_token.signature
         );
 
         match self {
@@ -185,11 +201,9 @@ impl RequestType {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct AccessToken {
-    token: String,
-
-    #[serde(rename = "sig")]
+    value: String,
     signature: String,
 }
 
@@ -198,11 +212,7 @@ async fn fetch_playlist<T: AsyncClient>(
     id: &str,
     request_type: RequestType,
 ) -> Result<MasterPlaylist<'static>, Error> {
-    let access_token_url = request_type.access_token_url(id);
-    let access_token = client
-        .get_json::<AccessToken>(access_token_url.as_str())
-        .await
-        .map_err(Into::into)?;
+    let access_token = graphql_api::get_access_token(request_type, id, client).await?;
 
     let playlist_url = request_type.playlist_url(id, &access_token);
     let playlist_data = client
@@ -214,5 +224,7 @@ async fn fetch_playlist<T: AsyncClient>(
         .map(MasterPlaylist::into_owned)
         .map_err(Error::from)
 }
+
+mod graphql_api;
 
 pub use hls_m3u8;
