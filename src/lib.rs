@@ -11,7 +11,7 @@ pub trait AsyncClient {
     type Error: Into<Error>;
 
     async fn get(&self, url: &str) -> Result<String, Self::Error>;
-    async fn post<T: DeserializeOwned>(
+    async fn post_json<T: DeserializeOwned>(
         &self,
         url: &str,
         header: (&str, &str),
@@ -28,7 +28,7 @@ impl AsyncClient for reqwest::Client {
         self.get(url).send().await?.text().await
     }
 
-    async fn post<T: DeserializeOwned>(
+    async fn post_json<T: DeserializeOwned>(
         &self,
         url: &str,
         (key, value): (&str, &str),
@@ -53,7 +53,7 @@ impl AsyncClient for surf::Client {
         self.get(url).recv_string().await
     }
 
-    async fn post<T: DeserializeOwned>(
+    async fn post_json<T: DeserializeOwned>(
         &self,
         url: &str,
         (key, value): (&str, &str),

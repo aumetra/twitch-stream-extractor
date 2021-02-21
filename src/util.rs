@@ -62,7 +62,7 @@ async fn fetch_access_token<T: AsyncClient>(
     let graphql_body = serde_json::to_string(&graphql_body)?;
 
     let graphql_response = client
-        .post::<Response>(graphql::API_URL, ("client-id", CLIENT_ID), graphql_body)
+        .post_json::<Response>(graphql::API_URL, ("client-id", CLIENT_ID), graphql_body)
         .await
         .map_err(Into::into)?;
 
