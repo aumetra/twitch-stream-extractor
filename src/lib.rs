@@ -1,38 +1,17 @@
-#![warn(clippy::all, clippy::pedantic)]
-#![allow(
-    clippy::doc_markdown,
-    clippy::must_use_candidate,
-    clippy::pub_enum_variant_names
-)]
-
-//!
-//! Extract URLs of live streams or VoD M3U8 playlists from Twitch
-//!
+#![deny(clippy::all, clippy::pedantic)]
+#![allow(clippy::missing_errors_doc)]
 
 use {
-    async_trait::async_trait,
-    hls_m3u8::{Error as HlsM3u8Error, MasterPlaylist},
-    serde::{de::DeserializeOwned, Deserialize},
-    std::{boxed::Box, convert::TryFrom, error::Error as StdError},
-    thiserror::Error as DeriveError,
+    ::async_trait::async_trait, error::Result, hls_m3u8::MasterPlaylist,
+    serde::de::DeserializeOwned, util::RequestType,
 };
 
-const CLIENT_ID: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
-
-const PLAYLIST_DOMAIN: &str = "https://usher.ttvnw.net";
-
-pub type GeneralError = Box<dyn StdError + Sync + Send + 'static>;
-
-/// Trait to define own clients
 #[async_trait]
 pub trait AsyncClient {
-    /// The error returned by the functions
     type Error: Into<Error>;
 
-    /// Execute a GET request
     async fn get(&self, url: &str) -> Result<String, Self::Error>;
-    /// Execute a POST request and decode the answer as JSON
-    async fn post_json<T: DeserializeOwned>(
+    async fn post<T: DeserializeOwned>(
         &self,
         url: &str,
         header: (&str, &str),
@@ -49,14 +28,14 @@ impl AsyncClient for reqwest::Client {
         self.get(url).send().await?.text().await
     }
 
-    async fn post_json<T: DeserializeOwned>(
+    async fn post<T: DeserializeOwned>(
         &self,
         url: &str,
-        (header_name, header_value): (&str, &str),
+        (key, value): (&str, &str),
         body: String,
     ) -> Result<T, Self::Error> {
         self.post(url)
-            .header(header_name, header_value)
+            .header(key, value)
             .body(body)
             .send()
             .await?
@@ -74,92 +53,26 @@ impl AsyncClient for surf::Client {
         self.get(url).recv_string().await
     }
 
-    async fn post_json<T: DeserializeOwned>(
+    async fn post<T: DeserializeOwned>(
         &self,
         url: &str,
-        (header_name, header_value): (&str, &str),
+        (key, value): (&str, &str),
         body: String,
     ) -> Result<T, Self::Error> {
         self.post(url)
-            .header(header_name, header_value)
+            .header(key, value)
             .body(body)
             .recv_json::<T>()
             .await
     }
 }
 
-/// Combined error type
-#[derive(Debug, DeriveError)]
-pub enum Error {
-    #[error("hls_m3u8 error occurred")]
-    HlsM3u8(#[from] HlsM3u8Error),
-
-    #[cfg(feature = "reqwest")]
-    #[error("reqwest error occurred")]
-    Reqwest(#[from] reqwest::Error),
-
-    #[error("serde-json error occurred")]
-    SerdeJson(#[from] serde_json::Error),
-
-    #[cfg(feature = "surf")]
-    #[error("surf error occurred")]
-    Surf(surf::Error),
-
-    #[error("An error occurred")]
-    Error(#[from] GeneralError),
-
-    #[error("Missing access token")]
-    MissingAccessToken,
-}
-
-#[cfg(feature = "surf")]
-impl From<surf::Error> for Error {
-    fn from(err: surf::Error) -> Self {
-        Self::Surf(err)
-    }
-}
-
-/// The URL extractor
 pub struct Extractor<T: AsyncClient> {
     client: T,
 }
 
-impl<T: AsyncClient> Extractor<T> {
-    /// Construct a new extractor using the given client
-    pub fn custom(client: T) -> Self {
-        Self { client }
-    }
-
-    /// Extract the playlist for a live stream
-    ///
-    /// # Errors
-    ///
-    /// This can either fail because:
-    /// * the access token response is malformed
-    /// * internet connectivity issues
-    /// * Twitch server issues
-    /// * Twitch changed the APIs
-    pub async fn stream(&self, channel_name: &'_ str) -> Result<MasterPlaylist<'static>, Error> {
-        fetch_playlist(&self.client, channel_name, RequestType::Stream).await
-    }
-
-    /// Extract the playlist for a VoD
-    ///
-    /// # Errors
-    ///
-    /// This can either fail because:
-    /// * the access token response is malformed
-    /// * internet connectivity issues
-    /// * Twitch server issues
-    /// * Twitch changed the APIs
-    pub async fn vod(&self, vod_id: &'_ str) -> Result<MasterPlaylist<'static>, Error> {
-        fetch_playlist(&self.client, vod_id, RequestType::Vod).await
-    }
-}
-
 #[cfg(feature = "reqwest")]
 impl Extractor<reqwest::Client> {
-    /// Create a new extractor using a standard reqwest client
     pub fn reqwest() -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -169,7 +82,6 @@ impl Extractor<reqwest::Client> {
 
 #[cfg(feature = "surf")]
 impl Extractor<surf::Client> {
-    /// Create a new extractor using a standard surf client
     pub fn surf() -> Self {
         Self {
             client: surf::client(),
@@ -177,52 +89,23 @@ impl Extractor<surf::Client> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum RequestType {
-    Stream,
-    Vod,
-}
+impl<T: AsyncClient> Extractor<T> {
+    pub fn custom(client: T) -> Self {
+        Self { client }
+    }
 
-impl RequestType {
-    fn playlist_url(self, id: &str, access_token: &AccessToken) -> String {
-        let query = format!(
-            "client_id={}&token={}&sig={}&allow_source&allow_audio_only",
-            CLIENT_ID, access_token.value, access_token.signature
-        );
+    pub async fn stream(&self, channel_name: &str) -> Result<MasterPlaylist<'static>> {
+        util::fetch_playlist(&self.client, RequestType::Stream, channel_name).await
+    }
 
-        match self {
-            RequestType::Stream => {
-                format!("{}/api/channel/hls/{}.m3u8?{}", PLAYLIST_DOMAIN, id, query)
-            }
-            RequestType::Vod => format!("{}/vod/{}.m3u8?{}", PLAYLIST_DOMAIN, id, query),
-        }
+    pub async fn vod(&self, vod_id: &str) -> Result<MasterPlaylist<'static>> {
+        util::fetch_playlist(&self.client, RequestType::Vod, vod_id).await
     }
 }
 
-#[derive(Default, Deserialize)]
-struct AccessToken {
-    value: String,
-    signature: String,
-}
+mod consts;
+mod entities;
+mod error;
+mod util;
 
-async fn fetch_playlist<T: AsyncClient>(
-    client: &T,
-    id: &str,
-    request_type: RequestType,
-) -> Result<MasterPlaylist<'static>, Error> {
-    let access_token = graphql_api::get_access_token(request_type, id, client).await?;
-
-    let playlist_url = request_type.playlist_url(id, &access_token);
-    let playlist_data = client
-        .get(playlist_url.as_str())
-        .await
-        .map_err(Into::into)?;
-
-    MasterPlaylist::try_from(playlist_data.as_str())
-        .map(MasterPlaylist::into_owned)
-        .map_err(Error::from)
-}
-
-mod graphql_api;
-
-pub use hls_m3u8;
+pub use {::async_trait, error::Error, hls_m3u8};
