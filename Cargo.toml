@@ -18,6 +18,9 @@ async-std = { version = "1", features = ["attributes"] }
 reqwest = { version = "0.11", features = ["default-tls"] }
 tokio = { version = "1", features = ["full"] }
 
+[features]
+not-send = []
+
 [[example]]
 name = "stream"
 required-features = [ "reqwest" ]

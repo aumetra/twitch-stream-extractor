@@ -6,7 +6,8 @@ use {
     serde::de::DeserializeOwned, util::RequestType,
 };
 
-#[async_trait]
+#[cfg_attr(feature = "not-send", async_trait(?Send))]
+#[cfg_attr(not(feature = "not-send"), async_trait)]
 pub trait AsyncClient {
     type Error: Into<Error>;
 
@@ -20,7 +21,8 @@ pub trait AsyncClient {
 }
 
 #[cfg(feature = "reqwest")]
-#[async_trait]
+#[cfg_attr(feature = "not-send", async_trait(?Send))]
+#[cfg_attr(not(feature = "not-send"), async_trait)]
 impl AsyncClient for reqwest::Client {
     type Error = reqwest::Error;
 
@@ -45,7 +47,8 @@ impl AsyncClient for reqwest::Client {
 }
 
 #[cfg(feature = "surf")]
-#[async_trait]
+#[cfg_attr(feature = "not-send", async_trait(?Send))]
+#[cfg_attr(not(feature = "not-send"), async_trait)]
 impl AsyncClient for surf::Client {
     type Error = surf::Error;
 
